@@ -76,11 +76,18 @@ object RunIntro extends Serializable {
 
   def statsWithMissing(rdd: RDD[Array[Double]]): Array[NAStatCounter] = {
     val nastats = rdd.mapPartitions((iter: Iterator[Array[Double]]) => {
-      val nas: Array[NAStatCounter] = iter.next().map(d => NAStatCounter(d))
-      iter.foreach(arr => {
-        nas.zip(arr).foreach { case (n, d) => n.add(d) }
-      })
-      Iterator(nas)
+      // Has to protect against empty iterators (e.g., small input); see also:
+      // http://stackoverflow.com/questions/31605440/how-to-use-mappartitions-in-scala
+      // http://stackoverflow.com/questions/31278958/apache-spark-iterating-through-rdd-gives-error-using-mappartitionstopair
+      if (iter.hasNext) {
+        val nas: Array[NAStatCounter] = iter.next().map(d => NAStatCounter(d))
+        iter.foreach(arr => {
+          nas.zip(arr).foreach { case (n, d) => n.add(d) }
+        })
+        Iterator(nas) // same as List(nas).iterator
+      } else {
+        Iterator.empty
+      }
     })
     nastats.reduce((n1, n2) => {
       n1.zip(n2).map { case (a, b) => a.merge(b) }
