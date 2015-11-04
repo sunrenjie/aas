@@ -20,7 +20,7 @@ object RunRecommender {
 
   def main(args: Array[String]): Unit = {
     val sc = new SparkContext(new SparkConf().setAppName("Recommender"))
-    val base = "hdfs:///user/ds/"
+    val base = args(0) + "/"
     val rawUserArtistData = sc.textFile(base + "user_artist_data.txt")
     val rawArtistData = sc.textFile(base + "artist_data.txt")
     val rawArtistAlias = sc.textFile(base + "artist_alias.txt")
@@ -31,6 +31,8 @@ object RunRecommender {
     recommend(sc, rawUserArtistData, rawArtistData, rawArtistAlias)
   }
 
+  // For each string record, return (id, name) tuple, where id is the integer
+  // up to first TAB character and name the rest.
   def buildArtistByID(rawArtistData: RDD[String]) =
     rawArtistData.flatMap { line =>
       val (id, name) = line.span(_ != '\t')
@@ -38,7 +40,7 @@ object RunRecommender {
         None
       } else {
         try {
-          Some((id.toInt, name.trim))
+          Some((id.toInt, name.trim)) // removes the leading TAB in name here
         } catch {
           case e: NumberFormatException => None
         }
@@ -61,6 +63,8 @@ object RunRecommender {
       rawArtistAlias: RDD[String]) = {
     val userIDStats = rawUserArtistData.map(_.split(' ')(0).toDouble).stats()
     val itemIDStats = rawUserArtistData.map(_.split(' ')(1).toDouble).stats()
+    // prints StatCounter for the users and items (artists) in the user-item
+    // data points.
     println(userIDStats)
     println(itemIDStats)
 
@@ -68,6 +72,7 @@ object RunRecommender {
     val artistAlias = buildArtistAlias(rawArtistAlias)
 
     val (badID, goodID) = artistAlias.head
+    // print the first badID => goodID record in the artist alias data.
     println(artistByID.lookup(badID) + " -> " + artistByID.lookup(goodID))
   }
 
@@ -87,6 +92,8 @@ object RunRecommender {
       rawArtistData: RDD[String],
       rawArtistAlias: RDD[String]): Unit = {
 
+    // XXX: buildArtistAlias(rawArtistAlias) is called twice; why not save and
+    // re-use?
     val bArtistAlias = sc.broadcast(buildArtistAlias(rawArtistAlias))
 
     val trainData = buildRatings(rawUserArtistData, bArtistAlias).cache()
@@ -95,6 +102,7 @@ object RunRecommender {
 
     trainData.unpersist()
 
+    // Print the first (quite arbitrary) RDD in model.userFeatures.
     println(model.userFeatures.mapValues(_.mkString(", ")).first())
 
     val userID = 2093760
@@ -110,8 +118,11 @@ object RunRecommender {
 
     val artistByID = buildArtistByID(rawArtistData)
 
+    // Print all artist names listened by the userID.
     artistByID.filter { case (id, name) => existingProducts.contains(id) }.
       values.collect().foreach(println)
+    // Print all artist names recommended to the userID. Comparing the two
+    // sets allows us to evaluate outcome of the recommender.
     artistByID.filter { case (id, name) => recommendedProductIDs.contains(id) }.
       values.collect().foreach(println)
 
@@ -211,6 +222,8 @@ object RunRecommender {
     val mostListenedAUC = areaUnderCurve(cvData, bAllItemIDs, predictMostListened(sc, trainData))
     println(mostListenedAUC)
 
+    // Compute AUC under different hyperparameters to see the differences.
+    // TODO optimization needed; this hogs BOTH memory and hard disk spaces!
     val evaluations =
       for (rank   <- Array(10,  50);
            lambda <- Array(1.0, 0.0001);
@@ -248,6 +261,7 @@ object RunRecommender {
     artistByID.filter { case (id, name) => recommendedProductIDs.contains(id) }.
        values.collect().foreach(println)
 
+    // Make batch recommendations for some arbitrary 100 users.
     val someUsers = allData.map(_.user).distinct().take(100)
     val someRecommendations = someUsers.map(userID => model.recommendProducts(userID, 5))
     someRecommendations.map(
